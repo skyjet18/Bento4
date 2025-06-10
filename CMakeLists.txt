@@ -108,6 +108,9 @@ foreach(app ${BENTO4_APPS})
 endforeach()
 endif(BUILD_APPS)
 
+add_library(mp4modify SHARED ${SOURCE_ROOT}/shlibs/mp4modify/Mp4Modify.cpp)
+target_link_libraries(mp4modify ap4)
+
 # Install
 include(GNUInstallDirs)
 set(config_install_dir "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")

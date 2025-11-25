@@ -314,7 +314,9 @@ AP4_TrunAtom::InspectFields(AP4_AtomInspector& inspector)
             }
             if (m_Flags & AP4_TRUN_FLAG_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT) {
                 inspector.AddField(inspector.GetVerbosity() >= 2 ? "sample_composition_time_offset" : "c",
-                                   m_Entries[i].sample_composition_time_offset);
+                                   m_Version == 0 ?
+                                   m_Entries[i].sample_composition_time_offset :
+                                   static_cast<AP4_UI64>(static_cast<AP4_SI32>(m_Entries[i].sample_composition_time_offset)));
             }
 
             inspector.EndObject();

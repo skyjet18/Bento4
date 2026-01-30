@@ -14,7 +14,9 @@ function(get_bento4_version)
 endfunction()
 
 get_bento4_version()
-set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "")
+if(APPLE)
+  set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "")
+endif()
 project(bento4 VERSION "${BENTO4_VERSION}")
 
 # Variables
@@ -34,7 +36,9 @@ if (EMSCRIPTEN)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-warn-absolute-paths")
 endif()
 
-set(CMAKE_OSX_DEPLOYMENT_TARGET 10.12)
+if(APPLE)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET 10.12)
+endif()
 
 if(MSVC)
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)

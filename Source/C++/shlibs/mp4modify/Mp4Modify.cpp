@@ -97,13 +97,16 @@ public:
 
 //+---------------------------------------------------------------------*/
 
-extern "C" int mp4_cenc_info_remove(char *data, int data_size )
+extern "C" int mp4_cenc_info_remove(const char *data, int data_size, char **out, int *out_size )
 {
 	AP4_DataBuffer db_in = AP4_DataBuffer();
 	db_in.SetBuffer((AP4_Byte *) data, data_size);
 	db_in.SetDataSize(data_size);
 
-	AP4_DataBuffer db_out = AP4_DataBuffer(data_size);
+	*out = (char *) malloc(data_size);
+	AP4_DataBuffer db_out = AP4_DataBuffer();
+	db_out.SetBuffer((AP4_Byte *) *out, data_size);
+	db_out.SetDataSize(0);
 
 	AP4_MemoryByteStream *input = new AP4_MemoryByteStream(db_in);
 	AP4_MemoryByteStream *output = new AP4_MemoryByteStream(db_out);
@@ -112,14 +115,13 @@ extern "C" int mp4_cenc_info_remove(char *data, int data_size )
 	processor.Process(*input, *output);
 	input->Release();
 
-	int ret = output->GetDataSize();
-	memcpy(data, output->GetData(), ret);
+	*out_size = output->GetDataSize();
 	output->Release();
 
-	return ret;
+	return 0;
 }
 
-extern "C" int mp4_decrypt(const char *init, int init_size, char *data, int data_size, char **keys )
+extern "C" int mp4_decrypt(const char *init, int init_size, const char *data, int data_size, const char **keys, char **out, int *out_size )
 {
 	AP4_ProtectionKeyMap key_map;
 	char* keyid_text = NULL;
@@ -176,7 +178,10 @@ extern "C" int mp4_decrypt(const char *init, int init_size, char *data, int data
 	db_in.SetDataSize(data_size);
 	AP4_MemoryByteStream *input = new AP4_MemoryByteStream(db_in);
 
-	AP4_DataBuffer db_out = AP4_DataBuffer(data_size);
+	*out = (char *) malloc(data_size);
+	AP4_DataBuffer db_out = AP4_DataBuffer();
+	db_out.SetBuffer((AP4_Byte *) *out, data_size);
+	db_out.SetDataSize(0);
 	AP4_MemoryByteStream *output = new AP4_MemoryByteStream(db_out);
 
 	AP4_Processor *processor = new AP4_CencDecryptingProcessor(&key_map);
@@ -186,18 +191,16 @@ extern "C" int mp4_decrypt(const char *init, int init_size, char *data, int data
 	init_input->Release();
 	input->Release();
 
-	int ret = output->GetDataSize();
-	memcpy(data, output->GetData(), ret);
+	*out_size = (int) output->GetDataSize();
 	output->Release();
 	delete processor;
 
 	if (AP4_FAILED(result))
 	{
 		fprintf(stderr, "ERROR: failed to process data (%d)\n", result);
-		ret = result;
 	}
 
-	return ret;
+	return result;
 }
 
 class KidInspector : public AP4_AtomInspector {
@@ -233,56 +236,97 @@ private:
 class PsshInspector : public AP4_AtomInspector {
 public:
 	// constructor and destructor
-	PsshInspector() : m_wv_found(false), m_wv_system_id{0xed, 0xef, 0x8b, 0xa9, 0x79, 0xd6, 0x4a, 0xce, 0xa3, 0xc8, 0x27, 0xdc, 0xd5, 0x1d, 0x21, 0xed}, m_pssh(NULL), m_pssh_size(0)
+	PsshInspector() :
+		m_wv_found(false),
+		m_pr_found(false),
+		m_wv_system_id{0xed, 0xef, 0x8b, 0xa9, 0x79, 0xd6, 0x4a, 0xce, 0xa3, 0xc8, 0x27, 0xdc, 0xd5, 0x1d, 0x21, 0xed},
+		m_pr_system_id{0x9a, 0x04, 0xf0, 0x79, 0x98, 0x40, 0x42, 0x86, 0xab, 0x92, 0xe6, 0x5b, 0xe0, 0x88, 0x5f, 0x95},
+		m_wv_pssh(NULL),
+		m_pr_pssh(NULL),
+		m_wv_pssh_size(0),
+		m_pr_pssh_size(0)
 	{
 
 	}
 	~PsshInspector()
 	{
-		free(m_pssh);
+		free(m_wv_pssh);
+		free(m_pr_pssh);
 	}
 
 	void AddField(const char* name, AP4_UI64 value, FormatHint  hint = HINT_NONE)
 	{
 		if( m_wv_found && strcmp(name, "data_size") == 0)
 		{
-			m_pssh_size = (AP4_Size) value;
-			fprintf(stderr, "INFO: PSSH size: %u\n", m_pssh_size);
+			m_wv_pssh_size = (AP4_Size) value;
+			fprintf(stderr, "INFO: WV PSSH size: %u\n", m_wv_pssh_size);
+		}
+
+		if( m_pr_found && strcmp(name, "data_size") == 0)
+		{
+			m_pr_pssh_size = (AP4_Size) value;
+			fprintf(stderr, "INFO: PR PSSH size: %u\n", m_pr_pssh_size);
 		}
 	}
 
 	void AddField(const char *name, const unsigned char *data, AP4_Size data_size, FormatHint hint = HINT_NONE)
 	{
-		if( m_pssh )
+		if(strcmp(name, "system_id") == 0)
 		{
-			return;
-		}
+			if( !m_wv_pssh && memcmp(data, m_wv_system_id, 16) == 0 )
+			{
+				fprintf(stderr, "INFO: found widevine PSSH\n");
+				m_wv_found = true;
+			}
 
-		if(strcmp(name, "system_id") == 0 && memcmp(data, m_wv_system_id, 16) == 0)
-		{
-			fprintf(stderr, "INFO: found widevine PSSH\n");
-			m_wv_found = true;
+			if( !m_pr_pssh && memcmp(data, m_pr_system_id, 16) == 0 )
+			{
+				fprintf(stderr, "INFO: found playready PSSH\n");
+				m_pr_found = true;
+			}
+
 		}
 		else if( strcmp(name, "data") == 0)
 		{
-			m_pssh = (char *) malloc( (2 * data_size) +1 );
-			AP4_FormatHex(data, data_size, m_pssh);
-			m_pssh[2 * data_size] = '\0';
-			m_wv_found = false;
-			fprintf(stderr, "INFO: PSSH: %s\n", m_pssh);
+			if( m_wv_found )
+			{
+				m_wv_pssh = (char *) malloc( (2 * data_size) +1 );
+				AP4_FormatHex(data, data_size, m_wv_pssh);
+				m_wv_pssh[2 * data_size] = '\0';
+				m_wv_found = false;
+				fprintf(stderr, "INFO: WV PSSH: %s\n", m_wv_pssh);
+			}
+
+			if( m_pr_found )
+			{
+				m_pr_pssh = (char *) malloc( (2 * data_size) +1 );
+				AP4_FormatHex(data, data_size, m_pr_pssh);
+				m_pr_pssh[2 * data_size] = '\0';
+				m_pr_found = false;
+				fprintf(stderr, "INFO: PR PSSH: %s\n", m_pr_pssh);
+			}
 		}
 	}
 
-	const char *get_pssh(void)
+	const char *get_wv_pssh(void)
 	{
-		return m_pssh ? m_pssh : "";
+		return m_wv_pssh ? m_wv_pssh : "";
+	}
+
+	const char *get_pr_pssh(void)
+	{
+		return m_pr_pssh ? m_pr_pssh : "";
 	}
 
 private:
 	bool           m_wv_found;
+	bool           m_pr_found;
 	unsigned char  m_wv_system_id[16];
-	char          *m_pssh;
-	AP4_Size       m_pssh_size;
+	unsigned char  m_pr_system_id[16];
+	char          *m_wv_pssh;
+	char          *m_pr_pssh;
+	AP4_Size       m_wv_pssh_size;
+	AP4_Size       m_pr_pssh_size;
 };
 
 extern "C" char *mp4_pssh_get( const char *data, int data_size )
@@ -341,9 +385,11 @@ extern "C" char *mp4_pssh_get( const char *data, int data_size )
 
 	input->Release();
 
-	char *ret = (char *) malloc( strlen(pssh_inspector.get_pssh()) + strlen(kid_inspector.get_kid()) + 2 );
+	char *ret = (char *) malloc( strlen(pssh_inspector.get_wv_pssh()) + 1 + strlen(pssh_inspector.get_pr_pssh()) + 1 + strlen(kid_inspector.get_kid()) + 1 );
 
-	strcpy(ret, pssh_inspector.get_pssh());
+	strcpy(ret, pssh_inspector.get_wv_pssh());
+	strcat(ret, ";");
+	strcpy(ret, pssh_inspector.get_pr_pssh());
 	strcat(ret, ";");
 	strcat(ret, kid_inspector.get_kid());
 	return ret;
